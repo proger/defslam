@@ -156,8 +156,7 @@
                                  landmark-dists)
                distance-guesses (map
                                  (fn [[id [x y]]]
-                                   (println [x y] (mat/magnitude [x y]))
-                                   (mat/magnitude
+                                   (magnitude
                                     [(- pose-x x) (- pose-y y)]))
                                  landmark-guesses)
                ;;_ (println distance-guesses)
@@ -173,8 +172,36 @@
        []
        observations))))
 
-(take 1 (doquery
-         :importance
-         slam-landmarks
-         [@!data]
-         :number-of-threads 10))
+
+;; (defn report-every [n coll]
+;;   ())
+
+;; when using importance sampling gotta use log-weights, not just take last.
+(def samples
+  (->> ;;(doquery :ipmcmc slam-landmarks  [@!data] :number-of-nodes 8 :number-of-particles 4)
+       (doquery :smc slam-landmarks  [@!data] :number-of-particles 100)
+       (take 50000)
+       (doall)
+       time))
+
+(def empirical-posterior
+  (->> samples
+       stat/collect-results
+       stat/empirical-distribution
+       ;;(into (sorted-map))
+       ))
+
+(get  empirical-posterior (apply max-key val empirical-posterior))
+
+(apply max-key val empirical-posterior)
+
+(def real-landmarks (->> @!data
+                         :observations
+                         first
+                         :world
+                         :landmarks))
+
+(->> empirical-posterior
+     (apply max-key val)
+     key
+     (map println real-landmarks))
