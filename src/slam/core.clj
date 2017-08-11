@@ -110,7 +110,7 @@
     (reset! !data data)
     (count obs)))
 
-;; (simulate)
+(simulate)
 
 ;; random variables: N poses + 10 landmarks
 
@@ -143,6 +143,11 @@
           landmark-dists (map (fn [i] [i [(uniform-continuous 0 max-x)
                                           (uniform-continuous 0 max-y)]])
                               (range num-landmarks))
+
+          landmark-guesses (map
+                            (fn [[i [x-dist y-dist]]]
+                              [i [(sample x-dist) (sample y-dist)]])
+                            landmark-dists)
           ;;true-poses (map #(-> % :world :robot) observations)
           ;;samples (map #(sample-values %) landmarks)
           ]
@@ -150,10 +155,6 @@
        (fn [state {:keys [measurements world control]}]
          (let [[pose-x pose-y] (:robot world)
                sensor-sigma (:sensor-sigma world)
-               landmark-guesses (map
-                                 (fn [[i [x-dist y-dist]]]
-                                   [i [(sample x-dist) (sample y-dist)]])
-                                 landmark-dists)
                distance-guesses (map
                                  (fn [[id [x y]]]
                                    (magnitude
@@ -176,11 +177,17 @@
 ;; (defn report-every [n coll]
 ;;   ())
 
+(def real-landmarks (->> @!data
+                         :observations
+                         first
+                         :world
+                         :landmarks))
+
 ;; when using importance sampling gotta use log-weights, not just take last.
 (def samples
   (->> ;;(doquery :ipmcmc slam-landmarks  [@!data] :number-of-nodes 8 :number-of-particles 4)
        (doquery :smc slam-landmarks  [@!data] :number-of-particles 100)
-       (take 50000)
+       (take 100)
        (doall)
        time))
 
@@ -191,17 +198,8 @@
        ;;(into (sorted-map))
        ))
 
-(get  empirical-posterior (apply max-key val empirical-posterior))
-
-(apply max-key val empirical-posterior)
-
-(def real-landmarks (->> @!data
-                         :observations
-                         first
-                         :world
-                         :landmarks))
-
-(->> empirical-posterior
-     (apply max-key val)
-     key
-     (map println real-landmarks))
+(->>  empirical-posterior
+       (apply max-key val)
+       key
+       (map println real-landmarks)
+       )
