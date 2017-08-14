@@ -194,7 +194,7 @@
   (let [base-world (-> (first observations) :world)
         [max-x max-y] (-> base-world :bounds)
         initial-pose (-> base-world :robot)
-        sigma (-> base-world :motion-)
+        sigma (-> base-world :motion-sigma)
 
         pose-guesses (reductions (fn [last-pose {:keys [control]}]
                                    (let [pose (mat/add
@@ -262,8 +262,8 @@
     (->>
      ;;(doquery :ipmcmc slam-landmarks  [data] :number-of-nodes 8 :number-of-particles 4)
      ;;(doquery :smc slam-landmarks [data] :number-of-particles 1000)
-     ;;(doquery :almh slam-landmarks [data])
-     (doquery :rmh slam-landmarks [data])
+     (doquery :almh slam-landmarks [data])
+     ;;(doquery :rmh slam-landmarks [data])
      ;;(doquery :pgas slam-landmarks-known-init [data])
      ;;(doquery :ipmcmc slam-landmarks [data])
      (partition 100)
@@ -324,52 +324,52 @@
 
 
 
-(with-primitive-procedures [magnitude]
-  (defquery slam-landmarks-known-init [{:keys [observations num-landmarks]}]
-    (let [base-world (-> (first observations)
-                         :world)
-          [max-x max-y] (-> base-world :bounds)
-          landmark-dists (map (fn [i] [i [(uniform-continuous 0 max-x)
-                                          (uniform-continuous 0 max-y)]])
-                              (range num-landmarks))
+;; (with-primitive-procedures [magnitude]
+;;   (defquery slam-landmarks-known-init [{:keys [observations num-landmarks]}]
+;;     (let [base-world (-> (first observations)
+;;                          :world)
+;;           [max-x max-y] (-> base-world :bounds)
+;;           landmark-dists (map (fn [i] [i [(uniform-continuous 0 max-x)
+;;                                           (uniform-continuous 0 max-y)]])
+;;                               (range num-landmarks))
 
-          initial-pose (-> base-world :robot)
+;;           initial-pose (-> base-world :robot)
 
-          landmark-guesses (map
-                            (fn [[i [x-dist y-dist]]]
-                              [i [(sample x-dist) (sample y-dist)]])
-                            landmark-dists)
+;;           landmark-guesses (map
+;;                             (fn [[i [x-dist y-dist]]]
+;;                               [i [(sample x-dist) (sample y-dist)]])
+;;                             landmark-dists)
 
-          pose-guesses (rest (sa/reductions (fn [[last-x last-y] {:keys [control]}]
-                                              (let [[dx dy] control
-                                                    pose [(+ last-x dx (sample (normal 0 0.5)))
-                                                          (+ last-y dy (sample (normal 0 0.5)))]]
-                                                pose)) initial-pose observations))
+;;           pose-guesses (rest (sa/reductions (fn [[last-x last-y] {:keys [control]}]
+;;                                               (let [[dx dy] control
+;;                                                     pose [(+ last-x dx (sample (normal 0 0.5)))
+;;                                                           (+ last-y dy (sample (normal 0 0.5)))]]
+;;                                                 pose)) initial-pose observations))
 
-          _ (assert (= (count pose-guesses) (count observations)))
-          ]
-      (reduce
-       (fn [index {:keys [measurements world control]}]
-         (let [[dx dy] control
-               sensor-sigma (:sensor-sigma world)
+;;           _ (assert (= (count pose-guesses) (count observations)))
+;;           ]
+;;       (reduce
+;;        (fn [index {:keys [measurements world control]}]
+;;          (let [[dx dy] control
+;;                sensor-sigma (:sensor-sigma world)
 
-               [pose-x pose-y] (nth pose-guesses index)
+;;                [pose-x pose-y] (nth pose-guesses index)
 
-               distance-guesses (map
-                                 (fn [[id [x y]]]
-                                   (magnitude [(- pose-x x) (- pose-y y)]))
-                                 landmark-guesses)
+;;                distance-guesses (map
+;;                                  (fn [[id [x y]]]
+;;                                    (magnitude [(- pose-x x) (- pose-y y)]))
+;;                                  landmark-guesses)
 
-               ;;_ (println distance-guesses)
-               ]
+;;                ;;_ (println distance-guesses)
+;;                ]
 
-              (reduce
-               (fn [_ {:keys [id dist]}]
-                 (observe (normal (nth distance-guesses id) sensor-sigma) dist))
-               nil
-               measurements)
+;;               (reduce
+;;                (fn [_ {:keys [id dist]}]
+;;                  (observe (normal (nth distance-guesses id) sensor-sigma) dist))
+;;                nil
+;;                measurements)
 
-              (inc index)))
-       0
-       observations)
-      landmark-guesses)))
+;;               (inc index)))
+;;        0
+;;        observations)
+;;       landmark-guesses)))
