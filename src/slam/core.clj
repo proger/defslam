@@ -31,6 +31,8 @@
 ;; at every step, infer the new pose by applying a motion model (integrating) and sampling from noise model
 ;; compute distance guesses with the pose sample
 
+;; idea: try independent queries for every landmark (assuming true paths)
+
 (with-primitive-procedures [distance mat-add]
   (defquery slam-landmarks [{:keys [initial-world observations num-landmarks]}]
     (let [[max-x max-y] (-> initial-world :bounds)
