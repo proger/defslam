@@ -107,8 +107,10 @@
 
 (defn explore
   "keep moving around until you see all landmarks"
-  [{num-landmarks :num-landmarks :as world}]
-  (loop [observations (explore-step world)
+  [{num-landmarks :num-landmarks
+    initial-pose :robot
+    :as world}]
+  (loop [observations (concat [(mk-observation% world initial-pose initial-pose)] (explore-step world))
          niters 0]
     (let [seen
           (->> observations
@@ -149,7 +151,7 @@
   (let [landmarks (:landmarks initial-world)
         poses (map #(-> % :world :robot) observations)
         starting-pose (-> initial-world :robot)]
-    {:poses (concat [starting-pose] poses)
+    {:poses poses ;;(concat [starting-pose] poses) ;; the first observation is now included
      :landmarks landmarks}))
 
 (defm sample-values [map-]
@@ -157,38 +159,48 @@
 
 (def magnitude #(mat/magnitude %))
 (def distance mat/distance)
+(def mat-add mat/add)
 
 ;; given true poses and noisy measurements,
 ;; sample from landmark positions, try to compute their measurements
 ;; and (observe (normal fake-measurement big-sigma) real-measurement)
 
-
-(with-primitive-procedures [distance]
-  (defquery slam-landmarks [{:keys [observations num-landmarks]}]
-    (let [[max-x max-y] (-> (first observations) :world :bounds)
-          landmarks (into (sorted-map) (map (fn [i] [i [(sample (uniform-continuous 0 max-x))
-                                                        (sample (uniform-continuous 0 max-y))]])
-                                            (range num-landmarks)))]
-      (reduce
-       (fn [_ {:keys [measurements world]}]
-         (let [pose (:robot world)
-               sensor-sigma 1 ;;(:sensor-sigma world)
-               ]
-
-           (reduce
-            (fn [_ {:keys [id dist]}]
-              (let [landmark-loc (get landmarks id)
-                    distance-guess (distance pose landmark-loc)]
-                (observe (normal distance-guess sensor-sigma) dist)))
-            nil
-            measurements)))
-       [] observations)
-      (into [] landmarks))))
-
 ;; landmarks and poses:
 ;; initial pose: sample from uniform grid
 ;; at every step, infer the new pose by applying a motion model (integrating) and sampling from noise model
 ;; compute distance guesses with the pose sample
+
+(with-primitive-procedures [distance mat-add]
+  (defquery slam-landmarks [{:keys [initial-world observations num-landmarks]}]
+    (let [[max-x max-y] (-> initial-world :bounds)
+          landmarks (into (sorted-map) (map (fn [i] [i [(sample (uniform-continuous 0 max-x))
+                                                        (sample (uniform-continuous 0 max-y))]])
+                                            (range num-landmarks)))
+
+          sensor-sigma 1
+          motion-sigma (-> initial-world :motion-sigma)
+
+          poses (rest (sa/reductions (fn [last-pose {:keys [control motion]}]
+                                       (let [
+                                             pose (mat-add
+                                                   last-pose
+                                                   (sample (mvn control motion-sigma)))
+                                             ;;pose (mat-add last-pose motion)
+                                             ]
+                                         pose)) [0 0] observations))
+          _ (assert (= (count poses) (count observations)))]
+      (map
+       (fn obs [{:keys [measurements]} pose]
+         (map
+          (fn meas [{:keys [id dist true-dist]}]
+            (let [landmark-loc (get landmarks id)
+                  distance-guess (distance pose landmark-loc)]
+              (observe (normal distance-guess sensor-sigma) true-dist)))
+          measurements))
+       observations poses)
+      {:landmarks (into [] landmarks)
+       :poses poses})))
+
 
 (defn pose-guesses [{:keys [observations]}]
   (let [base-world (-> (first observations) :world)
@@ -196,11 +208,11 @@
         initial-pose (-> base-world :robot)
         sigma (-> base-world :motion-sigma)
 
-        pose-guesses (reductions (fn [last-pose {:keys [control]}]
-                                   (let [pose (mat/add
-                                               last-pose
-                                               (ar/sample* (mvn control sigma)))]
-                                     pose)) initial-pose observations)]
+        pose-guesses (rest (reductions (fn [last-pose {:keys [control]}]
+                                         (let [pose (mat/add
+                                                     last-pose
+                                                     (ar/sample* (mvn control sigma)))]
+                                           pose)) [0 0] observations))]
     pose-guesses))
 
 
@@ -227,20 +239,38 @@
   [real-landmarks samples]
   (let [x (->> samples
                last
-               :result)
+               :result
+               :landmarks)
         errors (map (comp unit-weight :error norm-error) real-landmarks x)
         average-error (stat/empirical-mean errors)]
     average-error))
 
 
+(def query-cache (atom nil))
 
 ;; when using importance sampling gotta use log-weights, not just take last.
 (def samples
-  (let [data (simulate) ;;@!data
+  (let [
+        _ (reset! query-cache nil) ;; how to resume?
+        cached @query-cache
+
+        data (if (some? cached) (:data cached) (simulate)) ;;@!data
+
+        _ (if (some? cached)
+            (println "countinuing with obs count: " (count (:observations data)))
+            nil)
+
+        query (if (some? cached)
+                (:query cached)
+                (do
+                  (doquery :palmh slam-landmarks [data])))
+
         real-landmarks (->> data
                             :initial-world
-                            :landmarks)]
+                            :landmarks)
 
+        _ (reset! query-cache {:query query
+                               :data data})]
     (->>
      [
       (plot/list-plot (->> data ground-truth :poses)
@@ -260,9 +290,10 @@
      (apply plot/compose)
      vega/remoteplot)
     (->>
+     query
      ;;(doquery :ipmcmc slam-landmarks  [data] :number-of-nodes 8 :number-of-particles 4)
      ;;(doquery :smc slam-landmarks [data] :number-of-particles 1000)
-     (doquery :almh slam-landmarks [data])
+     ;;(doquery :almh slam-landmarks [data])
      ;;(doquery :rmh slam-landmarks [data])
      ;;(doquery :pgas slam-landmarks-known-init [data])
      ;;(doquery :ipmcmc slam-landmarks [data])
@@ -273,14 +304,14 @@
                              ;;:val (last samples)
                              )
                     samples))
-     (take 100)
+     (take 1000)
 
      flatten ;; undo partitioning
 
      doall
      time
 
-     last :result (map (comp norm-error-print norm-error) real-landmarks) doall)))
+     last :result :landmarks (map (comp norm-error-print norm-error) real-landmarks) doall)))
 
    ;; :result
    ;; (trace-header "landmark matching: actual vs inferred")
@@ -288,88 +319,3 @@
    ;; (map (comp unit-weight :error))
    ;; stat/empirical-mean
    ;; (trace-pprint "average error of the last sample")
-
-
-
-;; (defn empirical-moments [predict-id samples]
-;;   (let [weighted-states (stat/collect-by predict-id samples)]
-;;     {:mean (stat/empirical-mean weighted-states)
-;;      :var (stat/empirical-variance weighted-states)}))
-
-;; (def moments (empirical-moments :result samples))
-
-
-;; (def empirical-posterior
-;;   (->> samples
-;;        stat/collect-results
-;;        stat/empirical-distribution
-;;        ;;(into (sorted-map))
-;;        ))
-
-;; (->> samples
-;;      (map :log-weight)
-;;      frequencies)
-
-;; empirical-posterior
-
-;; (->>  empirical-posterior
-;;        (apply max-key val)
-;;        key
-;;        (map println real-landmarks)
-;;        )
-
-
-
-
-
-
-
-;; (with-primitive-procedures [magnitude]
-;;   (defquery slam-landmarks-known-init [{:keys [observations num-landmarks]}]
-;;     (let [base-world (-> (first observations)
-;;                          :world)
-;;           [max-x max-y] (-> base-world :bounds)
-;;           landmark-dists (map (fn [i] [i [(uniform-continuous 0 max-x)
-;;                                           (uniform-continuous 0 max-y)]])
-;;                               (range num-landmarks))
-
-;;           initial-pose (-> base-world :robot)
-
-;;           landmark-guesses (map
-;;                             (fn [[i [x-dist y-dist]]]
-;;                               [i [(sample x-dist) (sample y-dist)]])
-;;                             landmark-dists)
-
-;;           pose-guesses (rest (sa/reductions (fn [[last-x last-y] {:keys [control]}]
-;;                                               (let [[dx dy] control
-;;                                                     pose [(+ last-x dx (sample (normal 0 0.5)))
-;;                                                           (+ last-y dy (sample (normal 0 0.5)))]]
-;;                                                 pose)) initial-pose observations))
-
-;;           _ (assert (= (count pose-guesses) (count observations)))
-;;           ]
-;;       (reduce
-;;        (fn [index {:keys [measurements world control]}]
-;;          (let [[dx dy] control
-;;                sensor-sigma (:sensor-sigma world)
-
-;;                [pose-x pose-y] (nth pose-guesses index)
-
-;;                distance-guesses (map
-;;                                  (fn [[id [x y]]]
-;;                                    (magnitude [(- pose-x x) (- pose-y y)]))
-;;                                  landmark-guesses)
-
-;;                ;;_ (println distance-guesses)
-;;                ]
-
-;;               (reduce
-;;                (fn [_ {:keys [id dist]}]
-;;                  (observe (normal (nth distance-guesses id) sensor-sigma) dist))
-;;                nil
-;;                measurements)
-
-;;               (inc index)))
-;;        0
-;;        observations)
-;;       landmark-guesses)))
