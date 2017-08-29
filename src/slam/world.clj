@@ -3,8 +3,15 @@
             [clojure.walk :as walk]
             [clojure.pprint :refer [pprint]]
             [quil.core :as q]
-            [quil.middleware :as quil-middleware]))
+            [quil.middleware :as quil-middleware]
 
+            [clojure.java.shell :as shell]
+            [gnuplot.core :as g]
+
+            [slam.quat :as quat]))
+
+(def pi Math/PI)
+(defn sqr [x] (* x x))
 (def lxapply mat/mmul)
 
 (defn rowextend
@@ -34,7 +41,7 @@
 
 
 (defn rotation-z
-  "Rotation matrix about the Z axis. Also a 2d rotation about origin if you take the upper 2x2 part."
+  "Rotation matrix about the Z axis. Also a 2d rotation about origin if you take the upper left 2x2 part."
   [angle]
   (let [cos (mat/cos angle)
         sin (mat/sin angle)]
@@ -85,6 +92,26 @@
   (mat/mmul (translation>>rotation (deg->rad 45) 0 0 position) (rowextend arrow))
   :ok)
 
+(defn sigmoid
+  [x]
+  (if (neg? x)
+    (let [z (Math/exp x)] (/ z (inc z)))
+    (/ 1 (inc (Math/exp (- x))))))
+
+(defn helix [t]
+  (let [z (* t Math/PI 1/4)]
+    [(mat/cos z) (mat/sin z) z]))
+
+(defn helix-translate
+  []
+  (let [duration 5000
+        half-duration (* 1/2 duration)
+        t (q/millis)
+        step (mod t duration)
+        z (if (>= step half-duration)
+            (q/map-range step half-duration (dec duration) (* Math/PI 2) 0)
+            (q/map-range step 0 (dec half-duration) 0 (* Math/PI 2)))]
+    (apply q/translate (helix z))))
 
 (defn screen->rot
   ([x coef]
@@ -168,9 +195,15 @@
          (apply q/vertex end)
          (q/end-shape))))))
 
+(defn counter [state max name f]
+  (let [value (get state name 0)]
+    (when (< value max)
+      (f)
+      (assoc state name (inc value)))))
+
 
 (defn draw [state]
-  (q/background 180)
+  (q/background 200)
   (q/lights)
   (q/fill 150 100 150) ;; purple
   ;;(q/stroke 255 255 255)
@@ -181,7 +214,7 @@
 
   (q/reset-matrix)
 
-(let [height (q/height)
+  (let [height (q/height)
         width  (q/width)
         fovy   (/ Math/PI 3.0)
         aspect (/ width height)
@@ -192,23 +225,11 @@
     ;; (q/perspective
     ;;  fovy aspect z-near z-far)
 
-    ;; camera
-    ;;  000.7071 -000.7071  000.0000  000.0000
-    ;;  000.4082  000.4082 -000.8165  000.0000
-    ;;  000.5774  000.5774  000.5774 -346.4102
-    ;;  000.0000  000.0000  000.0000  001.0000
-    ;; projection
-    ;;  002.0000  000.0000  000.0000  000.0000
-    ;;  000.0000 -002.0000  000.0000  000.0000
-    ;;  000.0000  000.0000 -002.3333 -666.6667
-    ;;  000.0000  000.0000 -001.0000  000.0000
-
-    (q/camera 100 100 200 0 0 0 0 0 -1)
-    (q/frustum -100 100 -100 100 100 10000)
-
-    ;;(q/frustum -100 100 -100 100 -100 100)
-    ;;(q/ortho 0 width 0 height -10 10)
-    )
+    (q/camera -300 -300 150 ;; eye-xyz
+              0 0 0 ;; look-at
+              0 0 -1 ;; where is up
+              )
+    (q/frustum -100 100 -100 100 125 10000))
 
   (q/begin-camera)
 
@@ -225,52 +246,41 @@
   (q/end-camera)
 
 
-  ;; (q/begin-camera)
-  ;; (q/reset-matrix)
-  ;; (q/apply-matrix  1 0 0 0
-  ;;                  0 1 0 0
-  ;;                  0 0 1 -1000
-  ;;                  0 0 0 1)
-  ;; ;; (q/rotate-x -0.1)
-  ;; ;; (q/rotate-y Math/PI)
-  ;; ;; (q/rotate-z Math/PI)
-
-  ;; (q/rotate-x (* Math/PI 0.75))
-  ;; ;; (q/rotate-y (screen->rot (q/mouse-x)))
-  ;; ;; ;;(q/rotate-y (* Math/PI 0))
-  ;; ;; (q/rotate-z (* Math/PI 0.05))
-
-  ;; ;; (q/rotate-x -0.1)
-  ;; ;; (q/rotate-y (screen->rot (q/mouse-x)))
-  ;; ;; (q/rotate-z (screen->rot (q/mouse-y) 0.1))
-  ;; (q/end-camera)
-
-  ;; (q/reset-matrix)
-
-
-  (q/scale 50)
+  (q/scale 30)
 
   (doseq [drone-pos
-          [[ 0  0 0]
-           [ 5 5 1]
-           [ -3 3 1]]]
+          [[ 0  0 2]
+           ;;[ -2 10 -2]
+           ;;[ 5 5 1]
+           ;;[ -3 3 1]
+           ]]
     (q/with-translation drone-pos
-      (q/rotate-x (q/random 0.02 0.08))
+      (helix-translate)
+      (q/rotate-y (q/map-range (-> (q/millis)
+                                   (mod 1000))
+                               0
+                               999
+                               0
+                               (* 2 pi)))
+      (q/rotate-x (q/random 0.02 0.1))
       ;;(q/scale 50)
       ;;(q/scale 1)
-      ;;(draw-unit-frame)
+      (draw-unit-frame)
       (draw-quadrotor)
       ))
 
-  (q/translate [-50 -50 0])
-  (q/scale 1)
-  (q/stroke-weight 0.01)
 
   (q/with-stroke [255 0 0]
-    ;;(q/box 100)
-    ;;(q/box 30)
-    ;;(q/box 50)
+    (q/with-translation [0 0 15]
+      (q/no-fill)
+      ;;(q/box 100)
+      (q/box 30))
+    ;;(q/box 50
     )
+
+  (q/translate [-50 -50 0])
+  (q/scale 1)
+  (q/stroke-weight 0.02)
 
   (draw-grid 100)
 
@@ -291,7 +301,22 @@
   ;;   (draw-unit-frame))
   ;; (draw-quadrotor)
 
-  state)
+  ;; (let [text-buf (q/create-graphics 200 200)
+  ;;       comic-sans (q/create-font "ComicSansMS" 20 true)]
+  ;;   (q/with-graphics text-buf
+  ;;     (q/with-translation [0 0 0]
+  ;;       (q/text-font comic-sans)
+  ;;       (q/stroke 150 100 100)
+  ;;       (q/fill 150 100 100)
+  ;;       (q/text (format "ts %d" (-> (q/millis) (mod 1000))) 0 0 200 200)))
+  ;;   (q/copy text-buf [0 0 200 200] [10 10 210 210]))
+
+
+  (-> state
+      ;;(counter 100 :snapshot #(q/save-frame "snapshot-#####.png"))
+      identity))
+
+
 
 (defn key-pressed [state event]
   (condp = (:key event)
@@ -308,17 +333,177 @@
   state)
 
 
-(defn draw-settings [state]
-  (q/smooth)
-  state)
 
 (q/defsketch my-sketch
   :draw draw
-  :settings draw-settings
+  :setup #(q/smooth 8)
   :key-pressed key-pressed
   :size [800 600]
   :renderer :p3d
+  :features [:resizable]
   :navigation-3d {:step-size 100}
   :middleware [quil-middleware/fun-mode
                ;;quil-middleware/navigation-3d
                ])
+
+
+;; (my-sketch)
+
+;; dynamics:
+;; y'' = -g + motor-input
+;; second-order linear system. want to produce motor-input to control it
+;; why PID? we want the error to converge exponentially to zero
+;;
+
+
+;; ω  (angular velocity - radians of a point per second)
+;; rpm - revolutions of a point per minute
+
+(def scalar* *)
+
+(defn rpm->ω
+  "revolutions of a point per minute to radians per second (angular velocity)"
+  [rpm]
+  (scalar* 2 pi 1/60 rpm))
+
+
+(defn force-
+  "The angular velocity of rotor, denoted with ω, creates force in the direction of the rotor axis."
+  [lift ω]
+  (scalar* lift (sqr ω)))
+
+;; [yaw-psi-z
+;;  roll-phi-x
+;;  pitch-theta-y]
+
+(defn torque
+  "The angular velocity and acceleration of the rotor also create torque τ around the rotor axis."
+  [drag ω inertia ω']
+  (+ (scalar* drag (sqr ω)) (scalar* inertia ω')))
+
+
+;; torque orientation
+;;  ^ x (front)
+;; ω₄ CCW  ω₁ CW
+;;                  -> y (right)
+;; ω₃  CW  ω₂ CCW
+
+;; hover: rotor speeds have to compensate the weight
+;; we have a force we have to produce
+;; to produce force motors can generate torque
+
+(defn equilibrium [ω]
+  (let [lift :constant
+        mass :constant
+        g 9.81]
+    (= (force- lift ω) (* 1/4 mass g))))
+
+;; thrust is only up the z axis
+;;
+
+(defn power->torque [] :todo)
+(defn torque->thrust [] :todo)
+(defn torque->thrust [] :todo)
+(defn torque->acceleration [] :todo)
+
+
+(defn rigid-state []
+  {:position [0 0 0]
+   :orientation (quat/rot->quat (euler-zxy 1 0 0))
+   :linear-momentum [0 0 0] ;; P; P-dot is F - force
+   :angular-momentum [0 0 0] ;; L; L-dot is τ - torque
+   })
+
+;; (rigid-state)
+
+(defn skew-hat [[x y z]]
+  (mat/matrix [[    0  (- z)    y]
+               [    z     0 (- x)]
+               [(- y)     x     0]]))
+
+;; 2.10 Inertia Tensor
+;; 2 Mathematical model of quadcopter
+;; The quadcopter is assumed to have symmetric structure with the
+;; four arms aligned with the body x- and y-axes.
+;; Thus, the inertia matrix is diagonal matrix I in which Ixx = Iyy
+(defn angular:momentum->velocity [inertia-matrix-inv angular-momentum]
+  (mat/mmul inertia-matrix-inv angular-momentum))
+
+
+;; y-dot = y
+;; y(0) = 1
+
+;; y' = f(t,y)
+;; want to approximate y at t = (+ x0 step-size)
+(defn euler-step [f x & {:keys [step-size]
+                         :or {step-size 1}}]
+  (mat/add x (mat/mul step-size (f x))))
+
+(defn euler [f x & {:keys [step-size t₀ t]
+                    :or {step-size 0.0001
+                         t₀ 0
+                         t  100}}]
+  (let [t-span (- t t₀)
+        iters  (/ t-span step-size)]
+    (->> x
+         (iterate #(euler-step f % :step-size step-size))
+         (take iters))))
+
+(defn control [z-target [y z φ Dy Dz Dφ]]
+  (let [g 9.81
+        m 1]
+    (min 12
+         (+ (* m g)
+            (* 10 (- z-target z))
+            (* -3.7 Dz)))
+    ))
+
+(->> (let [   ;; inputs
+           u₁  0 ;; thrust force
+           u₂  0 ;; moment
+           ;; constants
+           Iₓₓ 1 ;; inertia component
+           m   1 ;; mass
+           g   9.81
+
+           init-state [0 0 0 0 0 0]
+           step-fn (fn planar
+                     [y z φ Dy Dz Dφ]
+                     (let [u₁ (control 10 [y z φ Dy Dz Dφ])]
+                       [Dy
+                        Dz
+                        Dφ
+                        (/ (* (- (mat/sin φ)) u₁) m)
+                        (- (/ (* (mat/cos φ)  u₁) m) g)
+                        (/ u₂ Iₓₓ)]))]
+       (euler #(apply step-fn %) init-state :t 10 :step-size 0.01))
+     plot-states
+     preview-flip-flop)
+
+;; now: take these states and build a 3d thing
+
+(defn preview-flip-flop [& args]
+  (shell/sh "osascript" "-e" "tell application \"Preview.app\" to activate")
+  (shell/sh "osascript" "-e" "tell application \"Emacs.app\" to activate")
+  args)
+
+
+(defn plot-states
+  [states]
+  (g/raw-plot! [[:set :output "gnuplot.png"]
+                [:set :term :png :truecolor :size (g/list 600 400)]
+                '[set autoscale]
+                ;;'[set key outside top right]
+                [:plot "-" :title "location" :with :points]]
+               [(->> states
+                     (map (fn [[x y _ _ _ _]] [x y])))]))
+
+
+(let
+    [t 4]
+    (-
+     (mat/exp t)
+     (last
+      (euler identity 1
+             :t t
+             :step-size 0.00001))))

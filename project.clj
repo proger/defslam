@@ -16,4 +16,7 @@
 
                  [cheshire "5.7.1"]
                  [gorilla-plot "0.1.4"]
-                 [gorilla-renderable "2.0.0"]])
+                 [gorilla-renderable "2.0.0"]
+                 [gnuplot "0.1.1"]
+
+                 [org.clojure/test.check "0.9.0"]])
