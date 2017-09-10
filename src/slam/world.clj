@@ -8,7 +8,12 @@
             [clojure.java.shell :as shell]
             [gnuplot.core :as g]
 
-            [slam.quat :as quat]))
+            [slam.quat :as quat]
+
+            [taoensso.tufte :as tufte]))
+
+(tufte/add-basic-println-handler! {})
+
 
 (def pi Math/PI)
 (defn sqr [x] (* x x))
@@ -266,7 +271,7 @@
       ;;(q/scale 50)
       ;;(q/scale 1)
       (draw-unit-frame)
-      (draw-quadrotor)
+      ;;(draw-quadrotor)
       ))
 
 
@@ -407,15 +412,6 @@
 (defn torque->acceleration [] :todo)
 
 
-(defn rigid-state []
-  {:position [0 0 0]
-   :orientation (quat/rot->quat (euler-zxy 1 0 0))
-   :linear-momentum [0 0 0] ;; P; P-dot is F - force
-   :angular-momentum [0 0 0] ;; L; L-dot is τ - torque
-   })
-
-;; (rigid-state)
-
 (defn skew-hat [[x y z]]
   (mat/matrix [[    0  (- z)    y]
                [    z     0 (- x)]
@@ -430,13 +426,13 @@
   (mat/mmul inertia-matrix-inv angular-momentum))
 
 
-;; y-dot = y
-;; y(0) = 1
 
-;; y' = f(t,y)
-;; want to approximate y at t = (+ x0 step-size)
-(defn euler-step [f x & {:keys [step-size]
-                         :or {step-size 1}}]
+(defn euler-step
+  "Numerical integration using Euler's first-order method.
+   Performs an infinitesimal step to solve an initial value problem
+   ẋ = f(x) through linearization."
+  [f x & {:keys [step-size]
+          :or {step-size 1}}]
   (mat/add x (mat/mul step-size (f x))))
 
 (defn euler [f x & {:keys [step-size t₀ t]
@@ -449,6 +445,16 @@
          (iterate #(euler-step f % :step-size step-size))
          (take iters))))
 
+(let
+    [t 4]
+    (-
+     (mat/exp t)
+     (last
+      (euler identity 1
+             :t t
+             :step-size 0.00001))))
+
+
 (defn control [z-target [y z φ Dy Dz Dφ]]
   (let [g 9.81
         m 1]
@@ -458,35 +464,10 @@
             (* -3.7 Dz)))
     ))
 
-(->> (let [   ;; inputs
-           u₁  0 ;; thrust force
-           u₂  0 ;; moment
-           ;; constants
-           Iₓₓ 1 ;; inertia component
-           m   1 ;; mass
-           g   9.81
-
-           init-state [0 0 0 0 0 0]
-           step-fn (fn planar
-                     [y z φ Dy Dz Dφ]
-                     (let [u₁ (control 10 [y z φ Dy Dz Dφ])]
-                       [Dy
-                        Dz
-                        Dφ
-                        (/ (* (- (mat/sin φ)) u₁) m)
-                        (- (/ (* (mat/cos φ)  u₁) m) g)
-                        (/ u₂ Iₓₓ)]))]
-       (euler #(apply step-fn %) init-state :t 10 :step-size 0.01))
-     plot-states
-     preview-flip-flop)
-
-;; now: take these states and build a 3d thing
-
 (defn preview-flip-flop [& args]
   (shell/sh "osascript" "-e" "tell application \"Preview.app\" to activate")
   (shell/sh "osascript" "-e" "tell application \"Emacs.app\" to activate")
   args)
-
 
 (defn plot-states
   [states]
@@ -498,12 +479,116 @@
                [(->> states
                      (map (fn [[x y _ _ _ _]] [x y])))]))
 
+(comment (->> (let [   ;; inputs
+                    u₁  0 ;; thrust force
+                    u₂  0 ;; moment
+                    ;; constants
+                    Iₓₓ 1 ;; inertia component
+                    m   1 ;; mass
+                    g   9.81
 
-(let
-    [t 4]
-    (-
-     (mat/exp t)
-     (last
-      (euler identity 1
-             :t t
-             :step-size 0.00001))))
+                    init-state [0 0 0 0 0 0]
+                    step-fn (fn planar
+                              [y z φ Dy Dz Dφ]
+                              (let [u₁ (control 10 [y z φ Dy Dz Dφ])]
+                                [Dy
+                                 Dz
+                                 Dφ
+                                 (/ (* (- (mat/sin φ)) u₁) m)
+                                 (- (/ (* (mat/cos φ)  u₁) m) g)
+                                 (/ u₂ Iₓₓ)]))]
+                (euler #(apply step-fn %) init-state :t 10 :step-size 0.01))
+              plot-states
+              preview-flip-flop))
+
+
+;; now: take these states and build a 3d thing
+
+;; quad 3d:
+;; state: x   y  z
+;;        Dx Dy Dz
+;;        rotation (quads or matrix)
+;;        angular velocity (ω = [p q r])
+
+;; control:
+;; motor thrusts, motor moments
+
+
+(defn init-state []
+  (let
+      [[x y z] [0 0 0]
+       [qs qx qy qz] (quat/rot->quat (euler-zxy 0 0 0))
+       [Dx Dy Dz] [0 0 0]
+       [p q r] [0 0 0]]
+    [x y z qs qx qy qz Dx Dy Dz p q r]))
+
+(def drone-params
+  {:mass 1
+   :gravity 9.81
+   :inertia (mat/identity-matrix 3)
+   :inertia-inv (mat/inverse (mat/identity-matrix 3))})
+
+(defn quad3 [state params control]
+  (let [[x y z qs qx qy qz Dx Dy Dz p q r] state
+        {mass :mass
+         inertia :inertia
+         inertia-inv :inertia-inv
+         gravity :gravity} params
+        {total-thrust :thrust
+         moments      :moments} control
+
+        quat [qs qx qy qz]
+        omega [p q r]
+        body-to-world (quat/quat->rot quat) ;; ?
+        world-to-body (mat/transpose body-to-world)
+
+        [[DDx DDy DDz]] (mat/columns
+                         (mat/mul (/ 1 mass) (mat/sub
+                                              (mat/mmul
+                                               world-to-body
+                                               (mat/column-matrix [0 0 total-thrust]))
+                                              (mat/column-matrix [0 0 (* mass gravity)]))))
+
+        K-quat 2
+        quat-error (- 1 (apply + (map sqr quat)))
+        q-dot (mat/add (mat/mmul -1/2
+                                 (mat/matrix [[0 (- p) (- q) (- r)]
+                                              [p    0  (- r)    q ]
+                                              [q    r     0  (- p)]
+                                              [r (- q)    p     0 ]])
+                                 quat)
+                       (mat/mmul K-quat quat-error quat))
+
+        [Dqs Dqx Dqy Dqz] q-dot
+
+        omegadot (mat/mmul inertia-inv
+                           (mat/sub
+                            moments
+                            (mat/mmul (skew-hat omega)
+                                      inertia
+                                      omega)))
+        [Dp Dq Dr] omegadot]
+    [Dx
+     Dy
+     Dz
+     Dqs
+     Dqx
+     Dqy
+     Dqz
+     DDx
+     DDy
+     DDz
+     Dp
+     Dq
+     Dr]))
+
+(comment (quad3 (init-state) {:thrust 40
+                              :moments [1 1 1]}))
+
+(tufte/profile {} (last (euler #(tufte/p :quad3 (quad3 %
+                                                       drone-params
+                                                       {:thrust 0
+                                                        :moments [0 0 0]}))
+                               (init-state)
+                               :t 10
+                               :step-size 0.01)))
