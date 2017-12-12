@@ -5,12 +5,10 @@
             [clojure.test :refer [is]]
             [clojure.test.check :as tc]
             [clojure.test.check.generators :as gen]
-            [clojure.test.check.properties :as prop]))
+            [clojure.test.check.properties :as prop]
 
-(defn skew-hat [[x y z]]
-  (mat/matrix [[    0  (- z)   y ]
-               [    z     0 (- x)]
-               [ (- y)    x    0 ]]))
+            [slam.linear :refer [skew-hat]]))
+
 
 (defn quat->rot [quat]
   (let [[s x y z] (mat/normalise quat)
