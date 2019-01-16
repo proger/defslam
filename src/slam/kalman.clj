@@ -65,9 +65,19 @@
           +states+)))
 
 
+(defn get-limits
+  ([points pad]
+  (let [xs (mat/reshape points [(mat/ecount points)])
+        x-min (reduce min xs)
+        x-max (reduce max xs)
+        x-pad (* pad (- x-max x-min))]
+    [(- x-min x-pad) (+ x-max x-pad)]))
+   ([points]
+    (get-limits points 0.1)))
 
-(def +x-limits+ (gorilla/get-limits +states+))
-(def +y-limits+ (gorilla/get-limits +observations+))
+
+(def +x-limits+ (get-limits +states+))
+(def +y-limits+ (get-limits +observations+))
 
 
 

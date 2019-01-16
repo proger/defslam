@@ -4,7 +4,8 @@
             [gorilla-renderable.core :as render]
             [clojure.core.matrix :as mat]
             [cheshire.core :as json]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [gnuplot.core :as g]))
 
 (def list-plot plot/list-plot)
 (def histogram plot/histogram)
@@ -83,4 +84,37 @@
           ;; bookend the y-data with zeroes.
           y-data (concat [0] cat-data [0])
           plot-data (map vector x-data y-data)]
-      plot-data)))
+      (into [] plot-data))))
+
+
+(defn timestamp [] (Math/round (/ (System/currentTimeMillis) 1000.)))
+
+(defn home-png-ts [tag] (str (System/getenv "HOME") "/" tag "-" (timestamp) ".png"))
+
+(defn home-png [tag] (str (System/getenv "HOME") "/" tag ".png"))
+
+(defn simple-histogram! [name data & {:keys [xrange yrange size with]
+                                      :or {xrange nil
+                                           yrange nil
+                                           size (g/list 800 400)
+                                           with :boxes}}]
+  (g/raw-plot!
+         [[:set :output (home-png name)]
+          [:set :term :png :truecolor :size size :fontscale 1]
+          [:set :autoscale]
+          ;;[:set :boxwidth 0.9 :relative]
+          [:set :style :fill :solid 0.6]
+          (if yrange [:set :yrange yrange] [])
+          (if xrange [:set :xrange xrange] [])
+          [:plot (g/list ["-" :title name :with with :lw 3])]]
+         [data]))
+
+
+(defn points-2d! [name xs & {:keys [size]
+                             :or {size (g/list 844 844)}}]
+  (g/raw-plot!
+         [[:set :output (home-png name)]
+          [:set :term :png :truecolor :size size :fontscale 1]
+          [:set :autoscale]
+          [:plot (g/list ["-" :title name :with :points :lw 3])]]
+         [xs]))

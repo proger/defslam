@@ -19,11 +19,10 @@
   [(* max-x (rand)) (* max-y (rand))])
 
 (defn grid-vector [[max-x max-y]]
-  (let [loc-sigma 0.05
-        loc (ar/sample* (ar/uniform-continuous 0.2 0.8))
-        loc-noise (ar/normal 0 loc-sigma)]
-    [(max 0 (min max-x (* max-x (+ loc (ar/sample* loc-noise)))))
-     (max 0 (min max-y (* max-y (+ loc (ar/sample* loc-noise)))))]))
+  (let [loc-x (ar/sample* (ar/uniform-continuous 0.2 0.8))
+        loc-y (ar/sample* (ar/uniform-continuous 0.2 0.8))]
+    [(max 0 (min max-x (* max-x loc-x)))
+     (max 0 (min max-y (* max-y loc-y)))]))
 
 (defn in-bounds [[max-x max-y] [x y]]
   (and (< x max-x) (< y max-y) (> y 0) (> x 0)))
@@ -112,7 +111,7 @@
 (def !data (atom []))
 
 (defn simulate []
-  (let [world (random-world [100 100])
+  (let [world (random-world [50 50])
         {obs :observations
          :as data} (explore world)]
     (reset! !data data)
